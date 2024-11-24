@@ -265,6 +265,13 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         throw std::invalid_argument("error: either --embedding or --reranking can be specified, but not both");
     }
 
+    if (params.verify) {
+        if (params.interactive || params.interactive_first || params.conversation) {
+            throw std::invalid_argument("error: either --verify or --interactive can be specified, but not both");
+        }
+        params.n_predict = 1;
+    }
+
     return true;
 }
 
@@ -2036,6 +2043,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             common_log_set_timestamps(common_log_main(), true);
         }
     ).set_env("LLAMA_LOG_TIMESTAMPS"));
+
+    add_opt(common_arg(
+        {"--verify", "--parallel-verify"}, "N",
+        "Enable verify mode.",
+        [](common_params & params, int value) {
+            params.verify = value;
+        }
+    ));
 
     return ctx_arg;
 }
