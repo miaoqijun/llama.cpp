@@ -39,6 +39,7 @@ BUILD_TARGETS = \
 	llama-vdot \
 	llama-cvector-generator \
 	llama-gen-docs \
+	llama-verification \
 	tests/test-c.o
 
 # Binaries only useful for tests
@@ -1388,6 +1389,11 @@ llama-minicpmv-cli: examples/llava/minicpmv-cli.cpp \
 	examples/llava/clip.h \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
+
+llama-verification: examples/verification/verification.cpp \
+	$(OBJ_ALL)
+	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 ifeq ($(UNAME_S),Darwin)
 swift: examples/batched.swift
