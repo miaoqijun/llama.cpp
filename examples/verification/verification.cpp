@@ -6,8 +6,37 @@
 
 static void print_usage(int, char ** argv) {
     printf("\nexample usage:\n");
-    printf("\n    %s -m model.gguf [-i input_len] [-ngl n_gpu_layers] prompt\n", argv[0]);
+    printf("\n    %s -m model.gguf [-i input_len] [-k top_k] [-ngl n_gpu_layers] prompt\n", argv[0]);
     printf("\n");
+}
+
+static llama_token llama_sampler_verify(struct llama_sampler * smpl, struct llama_context * ctx, int32_t idx, llama_token check_id) {
+    const auto * logits = llama_get_logits_ith(ctx, idx);
+
+    const int n_vocab = llama_n_vocab(llama_get_model(ctx));
+
+    // TODO: do not allocate each time
+    std::vector<llama_token_data> cur;
+    cur.reserve(n_vocab);
+    for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+        cur.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
+    }
+
+    llama_token_data_array cur_p = {
+        /* .data       = */ cur.data(),
+        /* .size       = */ cur.size(),
+        /* .selected   = */ -1,
+        /* .sorted     = */ false,
+    };
+
+    llama_sampler_apply(smpl, &cur_p);
+
+    for (int i = 0; i < (int)cur_p.size; i++) {
+        if (check_id == cur_p.data[i].id)
+            return check_id;
+    }
+
+    return cur_p.data[0].id;
 }
 
 int main(int argc, char ** argv) {
@@ -19,6 +48,8 @@ int main(int argc, char ** argv) {
     int ngl = 99;
     // len of input
     int input_len = 1;
+    // sampler top-k
+    int top_k = 1;
 
     // parse command line arguments
 
@@ -36,6 +67,18 @@ int main(int argc, char ** argv) {
                 if (i + 1 < argc) {
                     try {
                         input_len = std::stoi(argv[++i]);
+                    } catch (...) {
+                        print_usage(argc, argv);
+                        return 1;
+                    }
+                } else {
+                    print_usage(argc, argv);
+                    return 1;
+                }
+            } else if (strcmp(argv[i], "-k") == 0) {
+                if (i + 1 < argc) {
+                    try {
+                        top_k = std::stoi(argv[++i]);
                     } catch (...) {
                         print_usage(argc, argv);
                         return 1;
@@ -126,7 +169,7 @@ int main(int argc, char ** argv) {
     sparams.no_perf = false;
     llama_sampler * smpl = llama_sampler_chain_init(sparams);
 
-    llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(top_k));
 
     // prepare a batch for the prompt
 
@@ -135,10 +178,7 @@ int main(int argc, char ** argv) {
     std::vector<int8_t> logits(prompt_tokens.size(), true);
     batch.logits = logits.data();
 
-    // main loop
-
     const auto t_main_start = ggml_time_us();
-    int n_decode = 0;
     int accepted_len;
 
     // evaluate the current batch with the transformer model
@@ -149,7 +189,7 @@ int main(int argc, char ** argv) {
 
     // verification
     for (accepted_len = input_len; accepted_len < n_prompt - 1; accepted_len++) {
-        llama_token id = llama_sampler_sample(smpl, ctx, accepted_len);
+        llama_token id = llama_sampler_verify(smpl, ctx, accepted_len, prompt_tokens[accepted_len + 1]);
         if(id != prompt_tokens[accepted_len + 1]) {
             char buf[128];
             int n = llama_token_to_piece(model, id, buf, sizeof(buf), 0, true);
@@ -164,7 +204,7 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             std::string now(buf, n);
-            printf("the %d-th token expected to be%s, but%s\n", accepted_len + 1, expected.c_str(), now.c_str());
+            printf("the %d-th token%s is out of top-%d, recommended token: %s\n", accepted_len + 1, now.c_str(), top_k, expected.c_str());
             break;
         }
     }
